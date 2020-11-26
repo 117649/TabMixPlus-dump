@@ -14,7 +14,7 @@ XPCOMUtils.defineLazyGetter(this, "OS", () => {
 });
 
 XPCOMUtils.defineLazyModuleGetter(this, 'TabmixSvc',
-  'resource://tabmixplus/TabmixSvc.jsm');
+  'chrome://tabmix-resource/content/TabmixSvc.jsm');
 
 XPCOMUtils.defineLazyModuleGetter(this, "PromiseUtils",
   "resource://gre/modules/PromiseUtils.jsm");
@@ -56,7 +56,7 @@ const TABMIX_ID = '{dc572301-7619-498c-a57d-39143191b318}';
 const MIGRATE = 'tabmix.session.migrate.';
 
 this.EmbeddedWebExtension = {
-  QueryInterface: XPCOMUtils.generateQI([
+  QueryInterface: ChromeUtils.generateQI([
     Ci.nsIObserver,
     Ci.nsISupportsWeakReference
   ]),

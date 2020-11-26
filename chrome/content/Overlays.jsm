@@ -28,6 +28,11 @@ let oconsole = new ConsoleAPI({
   maxLogLevel: "warn" // "all"
 });
 
+Components.utils.import("resource:///modules/CustomizableUI.jsm");
+
+var Globals = {};
+Globals.widgets = {};
+
 /**
  * The overlays class, providing support for loading overlays like they used to work. This class
  * should likely be called through its static method Overlays.load()
@@ -101,7 +106,7 @@ class Overlays {
       let xhr = this.fetchOverlay(url);
       let doc = xhr.responseXML;
 
-      oconsole.debug(`Applying ${url} to ${this.location}`);
+      console.debug(`Applying ${url} to ${this.location}`);
 
       // clean the document a bit
       let emptyNodes = doc.evaluate(
@@ -170,6 +175,12 @@ class Overlays {
       }
     }
 
+    // We've resolved all the forward references we can, we can now go ahead and load the scripts
+    this.deferredLoad = [];
+    for (let script of this.unloadedScripts) {
+      this.deferredLoad.push(...this.loadScript(script));
+    }
+
     let ids = xulStore.getIDsEnumerator(this.location);
     while (ids.hasMore()) {
       this.persistedIDs.add(ids.getNext());
@@ -192,7 +203,7 @@ class Overlays {
     }
 
     if (forwardReferences.length) {
-      oconsole.warn(
+      console.warn(
         `Could not resolve ${forwardReferences.length} references`,
         forwardReferences
       );
@@ -225,19 +236,13 @@ class Overlays {
       }
     }
 
-    // We've resolved all the forward references we can, we can now go ahead and load the scripts
-    let deferredLoad = [];
-    for (let script of this.unloadedScripts) {
-      deferredLoad.push(...this.loadScript(script));
-    }
-
     if (this.document.readyState == "complete") {
       setTimeout(() => {
         this._finish();
 
         // Now execute load handlers since we are done loading scripts
         let bubbles = [];
-        for (let { listener, useCapture } of deferredLoad) {
+        for (let { listener, useCapture } of this.deferredLoad) {
           if (useCapture) {
             this._fireEventListener(listener);
           } else {
@@ -314,7 +319,7 @@ class Overlays {
     } else if (listener && typeof listener == "object") {
       listener.handleEvent(fakeEvent);
     } else {
-      oconsole.error("Unknown listener type", listener);
+      console.error("Unknown listener type", listener);
     }
   }
 
@@ -330,34 +335,83 @@ class Overlays {
     if (node.id) {
       let target = this.document.getElementById(node.id);
       if (node.localName == "toolbarpalette") {
-        let box;
-        if (target) {
-          box = target.closest("toolbox");
-        } else {
-          // These vanish from the document but still exist via the palette property
-          let boxes = [...this.document.getElementsByTagName("toolbox")];
-          box = boxes.find(box => box.palette && box.palette.id == node.id);
-          if(node.id == "BrowserToolbarPalette") box = this.gNavToolbox;
-          let palette = box ? box.palette : null;
+        // let box;
+        // if(node.id == "BrowserToolbarPalette"){
+        //   target = this.window.gNavToolbox.palette;
+        //   box =  this.window.gNavToolbox;
+        // }else{
+        //   if (target) {
+        //     box = target.closest("toolbox");
+        //     } else {
+        //       // These vanish from the document but still exist via the palette property
+        //       let boxes = [...this.document.getElementsByTagName("toolbox")];
+        //       box = boxes.find(box => box.palette && box.palette.id == node.id);
+        //       let palette = box ? box.palette : null;
+            
+        //       if (!palette) {
+        //         console.debug(
+        //           `The palette for ${
+        //             node.id
+        //           } could not be found, deferring to later`
+        //         );
+        //         return false;
+        //       }
+            
+        //       target = palette;
+        //     }
+        // } 
 
-          if (!palette) {
-            oconsole.debug(
-              `The palette for ${
-                node.id
-              } could not be found, deferring to later`
-            );
-            return false;
-          }
+        // this._toolbarsToResolve.push(...box.querySelectorAll("toolbar"));
+        // this._toolbarsToResolve.push(
+        //   ...this.document.querySelectorAll(`toolbar[toolboxid="${box.id}"]`)
+        // );
 
-          target = palette;
-        }
+        var toolboxes = this.window.document.querySelectorAll('toolbox');
+				for(let toolbox of toolboxes) {
+					var palette = toolbox.palette;
 
-        this._toolbarsToResolve.push(...box.querySelectorAll("toolbar"));
-        this._toolbarsToResolve.push(
-          ...this.document.querySelectorAll(`toolbar[toolboxid="${box.id}"]`)
-        );
+					if(palette
+					&& this.window.gCustomizeMode._stowedPalette
+					&& this.window.gCustomizeMode._stowedPalette.id == node.id
+					&& palette == this.window.gCustomizeMode.visiblePalette) {
+						palette = this.window.gCustomizeMode._stowedPalette;
+					}
+
+					if(palette && (palette.id == node.id || (node.id == "BrowserToolbarPalette" && toolbox == this.window.gNavToolbox))) {
+						buttons_loop: for(let button of node.childNodes) {
+							if(button.id) {
+								var existButton = this.window.document.getElementById(button.id);
+
+								// If it's a placeholder created by us to deal with CustomizableUI, just use it.
+								if(this.trueAttribute(existButton, 'CUI_placeholder')) {
+									this.removeAttribute(existButton, 'CUI_placeholder');
+									existButton.collapsed = false;
+									this.appendButton(this.window, palette, existButton);
+									continue buttons_loop;
+								}
+
+								// we shouldn't be changing widgets, or adding with same id as other nodes
+								if(existButton) {
+									continue buttons_loop;
+								}
+
+								// Save a copy of the widget node in the sandbox,
+								// so CUI can use it when opening a new window without having to wait for the overlay.
+								if(!Globals.widgets[button.id]) {
+									Globals.widgets[button.id] = button;
+								}
+
+								// add the button if not found either in a toolbar or the palette
+								button = this.window.document.importNode(button, true);
+								this.appendButton(this.window, palette, button);
+							}
+						}
+						break;
+					}
+				}
+				return true;
       } else if (!target) {
-        oconsole.debug(
+        console.debug(
           `The node ${node.id} could not be found, deferring to later`
         );
         return false;
@@ -395,10 +449,9 @@ class Overlays {
     }
 
     let nodes = node.querySelectorAll('script');
-    for (let nod of nodes) {
-      this.unloadedScripts.push(nod);
-    } 
-    
+    for (let script of nodes) {
+      this.deferredLoad.push(...this.loadScript(script));
+    }
 
     let wasInserted = false;
     let pos = node.getAttribute("insertafter");
@@ -465,7 +518,7 @@ class Overlays {
 
     for (let nodes of node.children) {
       if (nodes.localName == "script") {
-        this.unloadedScripts.push(nodes);
+        this.deferredLoad.push(...this.loadScript(nodes));
       } 
     }
 
@@ -509,7 +562,7 @@ class Overlays {
     try {
       xhr.channel.owner = Services.scriptSecurityManager.getSystemPrincipal();
     } catch (ex) {
-      oconsole.error(
+      console.error(
         "Failed to set system principal while fetching overlay " + srcUrl
       );
       xhr.close();
@@ -563,14 +616,14 @@ class Overlays {
 
     if (node.hasAttribute("src")) {
       let url = new URL(node.getAttribute("src"), node.baseURI).href;
-      oconsole.debug(`Loading script ${url} into ${this.window.location}`);
+      console.debug(`Loading script ${url} into ${this.window.location}`);
       try {
         Services.scriptloader.loadSubScript(url, this.window);
       } catch (ex) {
         Cu.reportError(ex);
       }
     } else if (node.textContent) {
-      oconsole.debug(`Loading eval'd script into ${this.window.location}`);
+      console.debug(`Loading eval'd script into ${this.window.location}`);
       try {
         let dataURL =
           "data:application/javascript," + encodeURIComponent(node.textContent);
@@ -598,9 +651,211 @@ class Overlays {
    * @return {Element}          An HTML link element for this stylesheet
    */
   loadCSS(url) {
-    oconsole.debug(`Loading ${url} into ${this.window.location}`);
+    console.debug(`Loading ${url} into ${this.window.location}`);
 
     let winUtils = this.window.windowUtils;
     winUtils.loadSheetUsingURIString(url, winUtils.AUTHOR_SHEET);
   }
+
+  trueAttribute(obj, attr) {
+    if(!obj || !obj.getAttribute) { return false; }
+  
+    return (obj.getAttribute(attr) == 'true');
+  };
+
+  removeAttribute(obj, attr) {
+    if(!obj || !obj.removeAttribute) { return; }
+    obj.removeAttribute(attr);
+  };
+
+  appendButton(aWindow, palette, node) {
+		if(!node.parentNode) {
+			palette.appendChild(node);
+		}
+		var id = node.id;
+
+		var widget = CustomizableUI.getWidget(id);
+		if(!widget || widget.provider != CustomizableUI.PROVIDER_API) {
+			// this needs the binding applied on the toolbar in order for the widget to be immediatelly placed there,
+			// and since its placements won't be restored until it's created, we have to search for it in all existing areas
+			var areaId = null;
+			var areas = CustomizableUI.areas;
+			for(let area of areas) {
+				// this will throw if called too early for an area whose placements have not been fetched yet,
+				// it's ok because once they are, the widget will be placed in it anyway
+				try { var inArea = CustomizableUI.getWidgetIdsInArea(area); }
+				catch(ex) { continue; }
+
+				if(inArea.indexOf(id) > -1) {
+					if(CustomizableUI.getAreaType(area) != CustomizableUI.TYPE_TOOLBAR) { break; }
+
+					areaId = area;
+					this.tempAppendAllToolbars(aWindow, area);
+					break;
+				}
+			}
+
+			try { CustomizableUI.createWidget(this.getWidgetData(aWindow, node, palette)); }
+			catch(ex) { Cu.reportError(ex); }
+
+			if(areaId) {
+				this.tempRestoreAllToolbars(aWindow, areaId);
+			}
+		}
+
+		else {
+			var placement = CustomizableUI.getPlacementOfWidget(id, aWindow);
+			var areaNode = (placement) ? aWindow.document.getElementById(placement.area) : null;
+			if(areaNode && areaNode.nodeName == 'toolbar' && !areaNode._init) {
+				this.tempAppendToolbar(aWindow, areaNode);
+			}
+
+			try { CustomizableUI.ensureWidgetPlacedInWindow(id, aWindow); }
+			catch(ex) { Cu.reportError(ex); }
+
+			if(areaNode) {
+				this.tempRestoreToolbar(areaNode);
+			}
+		}
+
+		// this.traceBack(aWindow, {
+		// 	action: 'appendButton',
+		// 	node: node
+		// });
+		return node;
+  }
+  
+  tempAppendToolbar(aWindow, node) {
+		if(node.tempAppend) {
+			Cu.reportError('tempAppend already exists!');
+			return;
+		}
+
+		node.tempAppend = {
+			parent: node.parentNode,
+			sibling: node.nextSibling,
+			container: aWindow.document.createElement('box')
+		};
+
+		setAttribute(node.tempAppend.container, 'style', 'position: fixed; top: 4000px; left: 4000px; opacity: 0.001;');
+		aWindow.document.documentElement.appendChild(node.tempAppend.container);
+
+		try { node.tempAppend.container.appendChild(node); }
+		catch(ex) { Cu.reportError(ex); }
+	}
+
+	tempRestoreToolbar(node) {
+		if(node.tempAppend) {
+			try { node.tempAppend.parent.insertBefore(node.tempAppend.container.firstChild, node.tempAppend.sibling); }
+			catch(ex) { Cu.reportError(ex); }
+
+			node.tempAppend.container.parentNode.removeChild(node.tempAppend.container);
+			delete node.tempAppend;
+		}
+	}
+
+	tempAppendAllToolbars(aWindow, aToolbarId) {
+		Windows.callOnAll((bWindow) => {
+			var wToolbar = bWindow.document.getElementById(aToolbarId);
+			if(wToolbar && !wToolbar._init) {
+				this.tempAppendToolbar(bWindow, wToolbar);
+			}
+		}, aWindow.document.documentElement.getAttribute('windowtype'));
+	}
+
+	tempRestoreAllToolbars(aWindow, aToolbarId) {
+		Windows.callOnAll((bWindow) => {
+			var wToolbar = bWindow.document.getElementById(aToolbarId);
+			if(wToolbar) {
+				this.tempRestoreToolbar(wToolbar);
+			}
+		}, aWindow.document.documentElement.getAttribute('windowtype'));
+  }
+  
+  getWidgetData(aWindow, node, palette) {
+		var data = {
+			removable: true // let's default this one
+		};
+
+		if(node.attributes) {
+			for(let attr of node.attributes) {
+				if(attr.value == 'true') {
+					data[attr.name] = true;
+				} else if(attr.value == 'false') {
+					data[attr.name] = false;
+				} else {
+					data[attr.name] = attr.value;
+				}
+			}
+		}
+
+		// createWidget() defaults the removable state to true as of bug 947987
+		if(!data.removable && !data.defaultArea) {
+			data.defaultArea = (node.parentNode) ? node.parentNode.id : palette.id;
+		}
+
+		if(data.type == 'custom') {
+			data.palette = palette;
+
+			data.onBuild = function(aDocument, aDestroy) {
+				// Find the node in the DOM tree
+				var node = aDocument.getElementById(this.id);
+
+				// If it doesn't exist, find it in a palette.
+				// We make sure the button is in either place at all times.
+				if(!node) {
+					var toolboxes = aDocument.querySelectorAll('toolbox');
+					toolbox_loop: for(let toolbox of toolboxes) {
+						var palette = toolbox.palette;
+						if(!palette) { continue; }
+
+						if(palette == aDocument.defaultView.gCustomizeMode.visiblePalette) {
+							palette = aDocument.defaultView.gCustomizeMode._stowedPalette;
+						}
+						for(let child of palette.childNodes) {
+							if(child.id == this.id) {
+								node = child;
+								break toolbox_loop;
+							}
+						}
+					}
+				}
+
+				// If it doesn't exist there either, CustomizableUI is using the widget information before it has been overlayed (i.e. opening a new window).
+				// We get a placeholder for it, then we'll replace it later when the window overlays.
+				if(!node && !aDestroy) {
+					var node = aDocument.importNode(Globals.widgets[this.id], true);
+					setAttribute(node, 'CUI_placeholder', 'true');
+					node.collapsed = true;
+				}
+
+				return node;
+			};
+
+			// unregisterArea()'ing the toolbar can nuke the nodes, we need to make sure ours are moved to the palette
+			data.onWidgetAfterDOMChange = function(aNode) {
+				if(aNode.id == this.id
+				&& !aNode.parentNode
+				&& !trueAttribute(aNode.ownerDocument.documentElement, 'customizing') // it always ends up in the palette in this case
+				&& this.palette) {
+					this.palette.appendChild(aNode);
+				}
+			};
+
+			data.onWidgetDestroyed = function(aId) {
+				if(aId == this.id) {
+					Windows.callOnAll((aWindow) => {
+						var node = data.onBuild(aWindow.document, true);
+						if(node) { node.remove(); }
+					}, 'navigator:browser');
+					CustomizableUI.removeListener(this);
+				}
+			};
+
+			CustomizableUI.addListener(data);
+		}
+
+		return data;
+	}
+
 }

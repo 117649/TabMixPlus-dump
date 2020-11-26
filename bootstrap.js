@@ -15,34 +15,34 @@ overlay   chrome://browser/content/browser.xhtml                 chrome://tabmix
 overlay   chrome://browser/content/browser.xhtml                 chrome://tabmixplus/content/overlay/tabstoolbar.xhtml appversion>=31.0b1
 `;
 
-// function showRestartNotifcation(verb, window) {
-//   window.PopupNotifications._currentNotifications.shift();
-//   window.PopupNotifications.show(
-//     window.gBrowser.selectedBrowser,
-//     'addon-install-restart',
-//     'Tab Mix Plus has been ' + verb + ', but a restart is required to ' + (verb == 'upgraded' || verb == 're-enabled' ? 'enable' : 'remove') + ' add-on functionality.',
-//     'addons-notification-icon',
-//     {
-//       label: 'Restart Now',
-//       accessKey: 'R',
-//       callback() {
-//         window.BrowserUtils.restartApplication();
-//       }
-//     },
-//     [{
-//       label: 'Not Now',
-//       accessKey: 'N',
-//       callback: () => {},
-//     }],
-//     {
-//       popupIconURL: 'chrome://tabmixplus/skin/addon-install-restart.svg',
-//       persistent: false,
-//       hideClose: true,
-//       timeout: Date.now() + 30000,
-//       removeOnDismissal: true
-//     }
-//   );
-// }
+function showRestartNotifcation(verb, window) {
+  window.PopupNotifications._currentNotifications.shift();
+  window.PopupNotifications.show(
+    window.gBrowser.selectedBrowser,
+    'addon-install-restart',
+    'Tab Mix Plus has been ' + verb + ', but a restart is required to ' + (verb == 'upgraded' || verb == 're-enabled' ? 'enable' : 'remove') + ' add-on functionality.',
+    'addons-notification-icon',
+    {
+      label: 'Restart Now',
+      accessKey: 'R',
+      callback() {
+        window.BrowserUtils.restartApplication();
+      }
+    },
+    [{
+      label: 'Not Now',
+      accessKey: 'N',
+      callback: () => {},
+    }],
+    {
+      popupIconURL: 'chrome://tabmixplus/skin/addon-install-restart.svg',
+      persistent: false,
+      hideClose: true,
+      timeout: Date.now() + 30000,
+      removeOnDismissal: true
+    }
+  );
+}
 
 function install() { }
 
@@ -66,7 +66,7 @@ function startup(data, reason) {
       return;
   } */
 
-  if (reason === ADDON_INSTALL /* || (reason === ADDON_ENABLE && !window.Tabmix) */) {
+  if (reason === ADDON_INSTALL || (reason === ADDON_ENABLE && !window.Tabmix)) {
     var enumerator = Services.wm.getEnumerator(null);
     while (enumerator.hasMoreElements()) {
       var win = enumerator.getNext();
